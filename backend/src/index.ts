@@ -57,6 +57,15 @@ async function main() {
     socket.on('disconnect', async () => {
       await handleDisconnect(socket);
     });
+
+    socket.on('journey_end', async (payload) => {
+      // Logic to handle the end of a trip
+      // e.g., mark driver as 'available', remove from active trips, etc.
+      // You can re-use handleDisconnect or make a new function
+      console.log('Journey ended for socket:', socket.id, 'Payload:', payload);
+      await handleDisconnect(socket); // Or a new function like handleJourneyEnd(socket)
+    });
+    
   });
 
   server.listen(5000, '0.0.0.0', () => {

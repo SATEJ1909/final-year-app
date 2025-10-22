@@ -1,4 +1,6 @@
 # Ambulance Tracking System (ATS) — Final Year Project
+Start-Process -NoNewWindow -FilePath "C:\Redis\redis-server.exe" -ArgumentList "--port 6379"
+
 
 This repository contains the Ambulance Tracking System (ATS) — a final-year project implementing a real-time ambulance tracking and alerting system. The project is split into two main parts:
 - backend: Node.js + TypeScript server with Express, Socket.IO, MongoDB and Redis for real-time location handling and proximity alerts.

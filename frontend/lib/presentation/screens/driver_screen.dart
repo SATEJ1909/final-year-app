@@ -1,4 +1,4 @@
-import 'dart:async';
+/* import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -20,8 +20,7 @@ class _DriverScreenState extends State<DriverScreen> with TickerProviderStateMix
   late SocketService _socketService;
 
   // --- State Variables ---
-  // Default location set to Amravati, Maharashtra, India.
-  static const LatLng _initialPosition = LatLng(20.9374, 77.7796);
+  static const LatLng _initialPosition = LatLng(20.9374, 77.7796); // Amravati
   LatLng _currentPosition = _initialPosition;
   bool _isTripActive = false;
 
@@ -29,9 +28,44 @@ class _DriverScreenState extends State<DriverScreen> with TickerProviderStateMix
   List<Polyline> _polylines = [];
   List<LatLng> _routePoints = [];
   List<Marker> _markers = [];
-  final TextEditingController _searchController = TextEditingController();
-
+  
+  // --- NEW: Replaced SearchController with Dropdown Controllers ---
+  final TextEditingController _sourceController = TextEditingController();
+  final TextEditingController _destinationController = TextEditingController();
   LatLng? _destination;
+
+  // --- NEW: List of locations in Amravati ---
+  final List<String> _amravatiPlaces = [
+    'Amravati Railway Station',
+    'Rajkamal Square',
+    'Kathora Gate',
+    'Camp Area',
+    'VMV Road',
+    'Walgaon Road',
+    'Dastur Nagar',
+    'Maltekdi',
+    'Shivaji Nagar',
+    'Nawathe Square',
+    'Rathi Nagar',
+    'Hanuman Vyayam Prasarak Mandal',
+    'SRPF Camp',
+    'Irwin Square',
+    'Badnera Railway Station',
+    'Sai Nagar',
+    'Gopal Nagar',
+    'Jawahar Road',
+    'Rajapeth',
+    'Paranjpe Colony',
+    'Sharda Nagar',
+    'Gadge Nagar',
+    'Nandgaon Peth',
+    'MIDC',
+    'Bharat Nagar',
+    'Rukhmini Nagar',
+    'Shivneri Colony',
+    'Shivaji Park',
+    'Siddhivinayak Colony',
+  ].toSet().toList(); // .toSet().toList() removes duplicates
 
   // --- Animation ---
   late AnimationController _pulseController;
@@ -41,7 +75,7 @@ class _DriverScreenState extends State<DriverScreen> with TickerProviderStateMix
   void initState() {
     super.initState();
     _socketService = Provider.of<SocketService>(context, listen: false);
-  _socketService.connectAndListen(userId: widget.userId, role: 'driver');
+    _socketService.connectAndListen(userId: widget.userId, role: 'driver');
 
     _pulseController = AnimationController(
       vsync: this,
@@ -52,18 +86,36 @@ class _DriverScreenState extends State<DriverScreen> with TickerProviderStateMix
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
-    _updateDriverMarker(_currentPosition);
+    // Use a more generic marker update function
+    _updateMarkers();
   }
 
-  void _updateDriverMarker(LatLng position) {
+  
+
+  // --- MODIFIED: This function now handles all marker states ---
+  void _updateMarkers() {
     setState(() {
       _markers = [
+        // Source / Current Position Marker
         Marker(
-          point: position,
+          point: _currentPosition,
           width: 80,
           height: 80,
-          child: Icon(Icons.location_on, color: Colors.blue[600], size: 45),
+          child: Icon(
+            _isTripActive ? Icons.drive_eta_rounded : Icons.trip_origin,
+            color: Colors.green[700],
+            size: 30,
+          ),
         ),
+        // Destination Marker (only if one is selected)
+        if (_destination != null)
+          Marker(
+            point: _destination!,
+            width: 80,
+            height: 80,
+            // Using the hospital icon from your _startJourney logic
+            child: Icon(Icons.local_hospital, color: Colors.red[700], size: 30),
+          ),
       ];
     });
   }
@@ -72,47 +124,44 @@ class _DriverScreenState extends State<DriverScreen> with TickerProviderStateMix
   void dispose() {
     _pulseController.dispose();
     _locationUpdateTimer?.cancel();
+    _sourceController.dispose();
+    _destinationController.dispose();
     super.dispose();
   }
 
+  // --- UNCHANGED: Your core logic ---
   void _startJourney() async {
-    if (_destination == null) return;
-  final routePoints = await _mapApiService.getShortestRoute(_currentPosition, _destination!);
-  _routePoints = routePoints;
+    if (_destination == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select a destination')));
+      return;
+    }
+    final routePoints = await _mapApiService.getShortestRoute(_currentPosition, _destination!);
+    _routePoints = routePoints;
 
     final routePolyline = Polyline(
       points: routePoints,
       strokeWidth: 5.0,
       color: Colors.blue.withOpacity(0.8),
     );
-    
+      
     setState(() {
       _polylines = [routePolyline];
-      _markers = [
-        Marker(
-          point: _currentPosition,
-          width: 80, height: 80,
-          child: Icon(Icons.trip_origin, color: Colors.green[700], size: 30),
-        ),
-        Marker(
-          point: _destination!,
-          width: 80, height: 80,
-          child: Icon(Icons.local_hospital, color: Colors.red[700], size: 30),
-        ),
-      ];
       _isTripActive = true;
+      // Update markers to reflect trip start
+      _updateMarkers(); 
     });
 
-  _mapController.fitBounds(LatLngBounds.fromPoints(routePoints), options: FitBoundsOptions(padding: const EdgeInsets.all(50.0)));
+    _mapController.fitBounds(LatLngBounds.fromPoints(routePoints), options: FitBoundsOptions(padding: const EdgeInsets.all(50.0)));
 
     _startSendingLocationUpdates();
   }
 
+  // --- MODIFIED: Added one line to update the marker on the map ---
   void _startSendingLocationUpdates() {
-     _locationUpdateTimer?.cancel();
-     // This timer simulates the driver moving along a path.
-     int idx = 0;
-     _locationUpdateTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      _locationUpdateTimer?.cancel();
+      // This timer simulates the driver moving along a path.
+      int idx = 0;
+      _locationUpdateTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
         if (idx >= _routePoints.length) {
           _endJourney();
           return;
@@ -120,21 +169,28 @@ class _DriverScreenState extends State<DriverScreen> with TickerProviderStateMix
         _currentPosition = _routePoints[idx];
         idx++;
 
+        // --- CRITICAL FIX: This updates the marker icon on the map ---
+        _updateMarkers();
+        // --- End of Fix ---
+
         _socketService.sendLocationUpdate(
           ambulanceId: widget.userId,
           lat: _currentPosition.latitude,
           lng: _currentPosition.longitude
         );
         print("Sent location update: $_currentPosition");
-     });
+      });
   }
 
+  // --- UNCHANGED: Your core logic ---
   void _endJourney() {
     _locationUpdateTimer?.cancel();
     setState(() {
       _isTripActive = false;
       _polylines = [];
-      _updateDriverMarker(_currentPosition);
+      _destination = null; // Clear destination
+      _destinationController.clear();
+      _updateMarkers(); // Reset markers
     });
   }
   
@@ -150,9 +206,9 @@ class _DriverScreenState extends State<DriverScreen> with TickerProviderStateMix
               padding: const EdgeInsets.only(right: 12.0),
               child: Row(
                 children: [
-                   const Text("TRIP ACTIVE", style: TextStyle(fontWeight: FontWeight.bold)),
-                   const SizedBox(width: 8),
-                   Icon(Icons.warning_amber_rounded, color: Colors.yellow[300]),
+                    const Text("TRIP ACTIVE", style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 8),
+                    Icon(Icons.warning_amber_rounded, color: Colors.yellow[300]),
                 ],
               ),
             )
@@ -180,7 +236,8 @@ class _DriverScreenState extends State<DriverScreen> with TickerProviderStateMix
             top: 10,
             left: 10,
             right: 10,
-            child: _buildSearchBar(),
+            // --- MODIFIED: Using new Source/Dest Bar ---
+            child: _buildSourceDestBar(),
           ),
           Positioned(
             bottom: 30,
@@ -195,59 +252,139 @@ class _DriverScreenState extends State<DriverScreen> with TickerProviderStateMix
     );
   }
 
-  Widget _buildSearchBar() {
+  // --- NEW: Replaces _buildSearchBar() ---
+  Widget _buildSourceDestBar() {
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: TextField(
-                controller: _searchController,
-                decoration: const InputDecoration(
-                  hintText: 'Search destination (address or place)',
-                  border: InputBorder.none,
+            Row(
+              children: [
+                const Icon(Icons.location_on, color: Colors.green, size: 22),
+                const SizedBox(width: 8),
+                const Text('Source:', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: _sourceController.text.isNotEmpty ? _sourceController.text : null,
+                    items: _amravatiPlaces.map((place) => DropdownMenuItem(value: place, child: Text(place, overflow: TextOverflow.ellipsis))).toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        _sourceController.text = val;
+                        _performSourceSearch();
+                      }
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'Select source',
+                      border: InputBorder.none,
+                    ),
+                    isExpanded: true,
+                  ),
                 ),
-                onSubmitted: (_) => _performSearch(),
-              ),
+              ],
             ),
-            IconButton(
-              icon: const Icon(Icons.search),
-              onPressed: _performSearch,
-            )
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Icon(Icons.flag, color: Colors.red, size: 22),
+                const SizedBox(width: 8),
+                const Text('Destination:', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _destinationController.text.isNotEmpty ? _destinationController.text : null,
+                    items: _amravatiPlaces.map((place) => DropdownMenuItem(value: place, child: Text(place, overflow: TextOverflow.ellipsis))).toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        _destinationController.text = val;
+                        _performDestSearch();
+                      }
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'Select destination',
+                      border: InputBorder.none,
+                    ),
+                    isExpanded: true,
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
     );
   }
 
-  Future<void> _performSearch() async {
-    final query = _searchController.text.trim();
+  // --- NEW: Replaces _performSearch() ---
+  Future<void> _performSourceSearch() async {
+    /* final query = _sourceController.text.trim();
     if (query.isEmpty) return;
     final pos = await _mapApiService.geocodeAddress(query);
     if (pos == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location not found')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Source location not found')));
+      return;
+    }
+    setState(() {
+      _currentPosition = pos;
+    });
+    _updateMarkers();
+    _mapController.move(pos, 14.0); */
+    final query = _sourceController.text.trim();
+    if (query.isEmpty) return;
+
+    // --- FIX: Make the query more specific ---
+    final specificQuery = "$query, Amravati, Maharashtra";
+    // --- End of Fix ---
+
+    final pos = await _mapApiService.geocodeAddress(specificQuery); // Use specificQuery
+    if (pos == null) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Source location not found')));
+      return;
+    }
+    setState(() {
+      _currentPosition = pos;
+    });
+    _updateMarkers();
+    _mapController.move(pos, 14.0);
+  }
+
+  // --- NEW: Replaces _performSearch() ---
+  Future<void> _performDestSearch() async {
+    /* final query = _destinationController.text.trim();
+    if (query.isEmpty) return;
+    final pos = await _mapApiService.geocodeAddress(query);
+    if (pos == null) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Destination not found')));
       return;
     }
     setState(() {
       _destination = pos;
-      _markers = [
-        Marker(
-          point: _currentPosition,
-          width: 80, height: 80,
-          child: Icon(Icons.trip_origin, color: Colors.green[700], size: 30),
-        ),
-        Marker(
-          point: pos,
-          width: 80, height: 80,
-          child: Icon(Icons.location_on, color: Colors.red[700], size: 40),
-        ),
-      ];
     });
+    _updateMarkers();
+    _mapController.move(pos, 14.0); */
+    final query = _destinationController.text.trim();
+    if (query.isEmpty) return;
+    
+    // --- FIX: Make the query more specific ---
+    final specificQuery = "$query, Amravati, Maharashtra";
+    // --- End of Fix ---
+
+    final pos = await _mapApiService.geocodeAddress(specificQuery); // Use specificQuery
+    if (pos == null) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Destination not found')));
+      return;
+    }
+    setState(() {
+      _destination = pos; // This will now be set correctly
+    });
+    _updateMarkers();
     _mapController.move(pos, 14.0);
   }
 
+  // --- UNCHANGED: Your core logic ---
   Widget _buildJourneyButton() {
     return ScaleTransition(
       scale: _pulseAnimation,
@@ -268,5 +405,467 @@ class _DriverScreenState extends State<DriverScreen> with TickerProviderStateMix
       ),
     );
   }
+} */
+
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:provider/provider.dart';
+import '../../services/map_api_service.dart';
+import '../../services/socket_io_service.dart';
+
+class DriverScreen extends StatefulWidget {
+  final String userId;
+  const DriverScreen({Key? key, required this.userId}) : super(key: key);
+
+  @override
+  _DriverScreenState createState() => _DriverScreenState();
 }
 
+class _DriverScreenState extends State<DriverScreen>
+    with TickerProviderStateMixin {
+  final MapController _mapController = MapController();
+  final MapApiService _mapApiService = MapApiService();
+  late SocketService _socketService;
+
+  // --- State Variables ---
+  static const LatLng _initialPosition = LatLng(20.9374, 77.7796); // Amravati
+  LatLng _currentPosition = _initialPosition;
+  bool _isTripActive = false;
+
+  Timer? _locationUpdateTimer;
+  List<Polyline> _polylines = [];
+  List<LatLng> _routePoints = [];
+  List<Marker> _markers = [];
+
+  // --- MODIFIED: Only need the source controller now ---
+  final TextEditingController _sourceController = TextEditingController();
+  LatLng? _destination;
+  String? _destinationAddress; // To show the tapped address
+
+  // --- We still need these for the "Source" dropdown ---
+  final List<String> _amravatiPlaces = [
+    'Amravati Railway Station',
+    'Rajkamal Square',
+    'Kathora Gate',
+    'Camp Area',
+    'VMV Road',
+    'Walgaon Road',
+    'Dastur Nagar',
+    'Maltekdi',
+    'Shivaji Nagar',
+    'Nawathe Square',
+    'Rathi Nagar',
+    'Hanuman Vyayam Prasarak Mandal',
+    'SRPF Camp',
+    'Irwin Square',
+    'Badnera Railway Station',
+    'Sai Nagar',
+    'Gopal Nagar',
+    'Jawahar Road',
+    'Rajapeth',
+    'Paranjpe Colony',
+    'Sharda Nagar',
+    'Gadge Nagar',
+    'Nandgaon Peth',
+    'MIDC',
+    'Bharat Nagar',
+    'Rukhmini Nagar',
+    'Shivneri Colony',
+    'Shivaji Park',
+    'Siddhivinayak Colony',
+  ].toSet().toList();
+
+  final Map<String, LatLng> _amravatiCoordinates = {
+    'Amravati Railway Station': const LatLng(20.9320, 77.7523),
+    'Rajkamal Square': const LatLng(20.9374, 77.7796),
+    'Kathora Gate': const LatLng(20.9968, 77.7565),
+    'Camp Area': const LatLng(20.9436, 77.7617),
+    'VMV Road': const LatLng(20.9600, 77.7600),
+    'Walgaon Road': const LatLng(21.0072, 77.7065),
+    'Dastur Nagar': const LatLng(20.9165, 77.7766),
+    'Maltekdi': const LatLng(20.9300, 77.7700),
+    'Shivaji Nagar': const LatLng(20.9400, 77.7700),
+    'Nawathe Square': const LatLng(20.9089, 77.7489),
+    'Rathi Nagar': const LatLng(20.9500, 77.7600),
+    'Hanuman Vyayam Prasarak Mandal': const LatLng(20.9267, 77.7408),
+    'SRPF Camp': const LatLng(20.9300, 77.8000),
+    'Irwin Square': const LatLng(20.9275, 77.7580),
+    'Badnera Railway Station': const LatLng(20.8600, 77.7300),
+    'Sai Nagar': const LatLng(20.9000, 77.7300),
+    'Gopal Nagar': const LatLng(20.8900, 77.7500),
+    'Jawahar Road': const LatLng(20.9319, 77.7502),
+    'Rajapeth': const LatLng(20.9207, 77.7559),
+    'Paranjpe Colony': const LatLng(20.9411, 77.7778),
+    'Sharda Nagar': const LatLng(20.9200, 77.7500),
+    'Gadge Nagar': const LatLng(20.9500, 77.7700),
+    'Nandgaon Peth': const LatLng(21.0200, 77.8200),
+    'MIDC': const LatLng(20.8881, 77.7609),
+    'Bharat Nagar': const LatLng(20.8900, 77.7400),
+    'Rukhmini Nagar': const LatLng(20.9300, 77.7700),
+    'Shivneri Colony': const LatLng(20.9400, 77.7800),
+    'Shivaji Park': const LatLng(20.9400, 77.7700),
+    'Siddhivinayak Colony': const LatLng(20.9000, 77.7400),
+  };
+
+  // --- Animation ---
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _socketService = Provider.of<SocketService>(context, listen: false);
+    _socketService.connectAndListen(userId: widget.userId, role: 'driver');
+
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+
+    _pulseAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    _updateMarkers();
+  }
+
+  void _updateMarkers() {
+    setState(() {
+      _markers = [
+        // Source / Current Position Marker
+        Marker(
+          point: _currentPosition,
+          width: 80,
+          height: 80,
+          child: Icon(
+            _isTripActive ? Icons.drive_eta_rounded : Icons.trip_origin,
+            color: Colors.green[700],
+            size: 30,
+          ),
+        ),
+        // Destination Marker (only if one is selected)
+        if (_destination != null)
+          Marker(
+            point: _destination!,
+            width: 80,
+            height: 80,
+            child: Icon(Icons.local_hospital, color: Colors.red[700], size: 30),
+          ),
+      ];
+    });
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    _locationUpdateTimer?.cancel();
+    _sourceController.dispose();
+    // _destinationController.dispose(); // No longer needed
+    super.dispose();
+  }
+
+  // --- NEW: This function handles the map long-press ---
+  void _handleLongPress(TapPosition tap, LatLng latlng) async {
+    if (_isTripActive) return; // Don't allow changing destination during a trip
+
+    setState(() {
+      _destination = latlng;
+      _destinationAddress = "Loading address...";
+    });
+    _updateMarkers();
+
+    // --- Optional: Get the address of the tapped point ---
+    // You need to implement reverseGeocode in your MapApiService
+    try {
+      final address = await _mapApiService.reverseGeocode(latlng);
+      setState(() {
+        _destinationAddress = address;
+      });
+    } catch (e) {
+      setState(() {
+        _destinationAddress = "Tapped Location";
+      });
+    }
+  }
+
+  void _startJourney() async {
+    if (_destination == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Long-press on the map to set a destination')));
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Calculating shortest route...')));
+
+    try {
+      final routePoints = await _mapApiService.getShortestRoute(
+          _currentPosition, _destination!);
+      _routePoints = routePoints;
+
+      if (routePoints.isEmpty) {
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Could not find a route.')));
+        return;
+      }
+
+      final routePolyline = Polyline(
+        points: routePoints,
+        strokeWidth: 7.0, // Make the line thicker
+        color: Colors.deepPurple[700]!.withOpacity(0.9), // Dark violet with high opacity
+        borderColor: Colors.purple[900]!.withOpacity(0.8), // A slightly darker purple border
+        borderStrokeWidth: 2.0, // Add a border to make it pop even more
+      );
+
+      setState(() {
+        _isTripActive = true;
+        _updateMarkers();
+      });
+
+      _mapController.fitBounds(LatLngBounds.fromPoints(routePoints),
+          options: const FitBoundsOptions(padding: EdgeInsets.all(50.0)));
+
+      _startSendingLocationUpdates();
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Error finding route: $e')));
+    }
+  }
+
+  void _startSendingLocationUpdates() {
+    _locationUpdateTimer?.cancel();
+    int idx = 0;
+    _locationUpdateTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (idx >= _routePoints.length) {
+        _endJourney();
+        return;
+      }
+      _currentPosition = _routePoints[idx];
+      idx++;
+
+      _updateMarkers();
+
+      _socketService.sendLocationUpdate(
+          ambulanceId: widget.userId,
+          lat: _currentPosition.latitude,
+          lng: _currentPosition.longitude);
+      print("Sent location update: $_currentPosition");
+    });
+  }
+
+  void _endJourney() {
+    _locationUpdateTimer?.cancel();
+    setState(() {
+      _isTripActive = false;
+      _polylines = [];
+      _destination = null;
+      _destinationAddress = null; // Clear address
+      _updateMarkers(); // Reset markers
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Driver On Duty'),
+        backgroundColor: Colors.red[800],
+        actions: [
+          if (_isTripActive)
+            Padding(
+              padding: const EdgeInsets.only(right: 12.0),
+              child: Row(
+                children: [
+                  const Text("TRIP ACTIVE",
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 8),
+                  Icon(Icons.warning_amber_rounded, color: Colors.yellow[300]),
+                ],
+              ),
+            )
+        ],
+      ),
+      body: Stack(
+        children: [
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: _initialPosition,
+              initialZoom: 14.0,
+              // --- THIS IS THE KEY ---
+              onLongPress: _handleLongPress,
+            ),
+            children: [
+              TileLayer(
+                urlTemplate:
+                    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                subdomains: const ['a', 'b', 'c'],
+                userAgentPackageName: 'com.example.ats_frontend',
+              ),
+              PolylineLayer(polylines: _polylines),
+              MarkerLayer(markers: _markers),
+            ],
+          ),
+          Positioned(
+            top: 10,
+            left: 10,
+            right: 10,
+            child: _buildSourceDestBar(),
+          ),
+          if (!_isTripActive)
+            Positioned(
+              bottom: 30,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: _buildJourneyButton(),
+              ),
+            ),
+          if (_isTripActive)
+            Positioned(
+              bottom: 30,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: _buildJourneyButton(),
+              ),
+            )
+        ],
+      ),
+    );
+  }
+
+  // --- MODIFIED: This widget is now simpler ---
+  Widget _buildSourceDestBar() {
+    bool isEnabled = !_isTripActive;
+
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // --- Source Row (Still here) ---
+            Row(
+              children: [
+                const Icon(Icons.location_on, color: Colors.green, size: 22),
+                const SizedBox(width: 8),
+                const Text('Source:',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: _sourceController.text.isNotEmpty
+                        ? _sourceController.text
+                        : null,
+                    items: _amravatiPlaces
+                        .map((place) => DropdownMenuItem(
+                            value: place,
+                            child:
+                                Text(place, overflow: TextOverflow.ellipsis)))
+                        .toList(),
+                    onChanged: isEnabled
+                        ? (val) {
+                            if (val != null) {
+                              _sourceController.text = val;
+                              _performSourceSearch();
+                            }
+                          }
+                        : null,
+                    decoration: InputDecoration(
+                      hintText: 'Select source depot',
+                      border: InputBorder.none,
+                    ),
+                    isExpanded: true,
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 16),
+            // --- Destination Row (Replaced) ---
+            Row(
+              children: [
+                const Icon(Icons.flag, color: Colors.red, size: 22),
+                const SizedBox(width: 8),
+                const Text('Destination:',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 8),
+                Expanded(
+                  // Show the address if we have it, otherwise show instructions
+                  child: Text(
+                    _destinationAddress ?? 'Long-press on map to set...',
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: _destinationAddress == null
+                          ? Colors.black54
+                          : Colors.black,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- This function is still needed for the Source dropdown ---
+  void _performSourceSearch() {
+    final query = _sourceController.text.trim();
+    if (query.isEmpty) return;
+    final pos = _amravatiCoordinates[query];
+
+    if (pos == null) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Source location not in database.')));
+      return;
+    }
+    setState(() {
+      _currentPosition = pos;
+    });
+    _updateMarkers();
+    _mapController.move(pos, 14.0);
+  }
+
+  // --- _performDestSearch is no longer needed ---
+
+  Widget _buildJourneyButton() {
+    bool isStartDisabled = !_isTripActive && _destination == null;
+
+    return ScaleTransition(
+      scale: _pulseAnimation,
+      child: ElevatedButton.icon(
+        icon: Icon(
+            _isTripActive
+                ? Icons.stop_circle_outlined
+                : Icons.play_arrow_rounded,
+            size: 32),
+        label: Text(
+          _isTripActive ? 'END JOURNEY' : 'START JOURNEY',
+          style: const TextStyle(
+              fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+        ),
+        onPressed: isStartDisabled
+            ? null
+            : (_isTripActive ? _endJourney : _startJourney),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _isTripActive
+              ? Colors.blueGrey[700]
+              : (isStartDisabled ? Colors.grey : Colors.red[700]),
+          foregroundColor: Colors.white,
+          shape: const StadiumBorder(),
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+          elevation: 8.0,
+        ),
+      ),
+    );
+  }
+}

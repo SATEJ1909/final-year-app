@@ -25,6 +25,7 @@ dependencies:
 
   # For simple state management and dependency injection
   provider: ^6.1.2
+  flutter_svg: ^2.0.5
 
   cupertino_icons: ^1.0.2
 
@@ -35,5 +36,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/images/hero_illustration.svg
+    - assets/images/ambulance_marker.svg
   
 

@@ -53,5 +53,33 @@ class MapApiService {
     if (lat == null || lon == null) return null;
     return LatLng(lat, lon);
   }
+
+  // In map_api_service.dart
+
+// ... (keep getShortestRoute and geocodeAddress)
+
+  /// Use Nominatim to get an address from coordinates.
+  Future<String> reverseGeocode(LatLng point) async {
+    final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/reverse?lat=${point.latitude}&lon=${point.longitude}&format=json&addressdetails=1');
+
+    final response = await http.get(url, headers: {
+      'User-Agent': 'ATS-Frontend/1.0 (dev@local)',
+    });
+
+    if (response.statusCode != 200) {
+      throw Exception('Reverse geocoding failed: ${response.statusCode}');
+    }
+
+    final result = jsonDecode(response.body) as Map<String, dynamic>;
+    if (result.containsKey('display_name')) {
+      return result['display_name'] as String;
+    } else if (result.containsKey('error')) {
+      return 'Error: ${result['error']}';
+    } else {
+      return 'Unknown location';
+    }
+  }
+  
 }
 
