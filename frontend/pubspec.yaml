@@ -13,6 +13,7 @@ dependencies:
   # --- UPDATED: Using OpenStreetMap instead of Google Maps ---
   flutter_map: ^6.1.0
   latlong2: ^0.9.0 # Helper package for flutter_map
+  geolocator: ^10.1.0
 
   # For Socket.IO client
   socket_io_client: ^2.0.3+1

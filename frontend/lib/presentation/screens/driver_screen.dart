@@ -414,6 +414,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import '../../services/map_api_service.dart';
 import '../../services/socket_io_service.dart';
+import 'package:geolocator/geolocator.dart'; // Import for GPS
 
 class DriverScreen extends StatefulWidget {
   final String userId;
@@ -423,8 +424,7 @@ class DriverScreen extends StatefulWidget {
   _DriverScreenState createState() => _DriverScreenState();
 }
 
-class _DriverScreenState extends State<DriverScreen>
-    with TickerProviderStateMixin {
+class _DriverScreenState extends State<DriverScreen> with TickerProviderStateMixin {
   final MapController _mapController = MapController();
   final MapApiService _mapApiService = MapApiService();
   late SocketService _socketService;
@@ -433,18 +433,17 @@ class _DriverScreenState extends State<DriverScreen>
   static const LatLng _initialPosition = LatLng(20.9374, 77.7796); // Amravati
   LatLng _currentPosition = _initialPosition;
   bool _isTripActive = false;
-
+  
   Timer? _locationUpdateTimer;
   List<Polyline> _polylines = [];
   List<LatLng> _routePoints = [];
   List<Marker> _markers = [];
-
-  // --- MODIFIED: Only need the source controller now ---
+  
   final TextEditingController _sourceController = TextEditingController();
   LatLng? _destination;
-  String? _destinationAddress; // To show the tapped address
+  String? _destinationAddress;
 
-  // --- We still need these for the "Source" dropdown ---
+  // --- Hardcoded Locations for Dropdown ---
   final List<String> _amravatiPlaces = [
     'Amravati Railway Station',
     'Rajkamal Square',
@@ -529,8 +528,54 @@ class _DriverScreenState extends State<DriverScreen>
     );
 
     _updateMarkers();
+    _getCurrentLocation(); // --- Try to get GPS location on start ---
   }
 
+  /// --- Handles getting the device's current GPS location ---
+  Future<void> _getCurrentLocation() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location services are disabled.')));
+      return;
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location permissions are denied')));
+        return;
+      }
+    }
+    
+    if (permission == LocationPermission.deniedForever) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location permissions are permanently denied.')));
+      return;
+    } 
+
+    try {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Getting current location...')));
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high
+      );
+      
+      LatLng newPos = LatLng(position.latitude, position.longitude);
+
+      setState(() {
+        _currentPosition = newPos;
+        _sourceController.text = "My Current Location"; // Update text
+      });
+      _updateMarkers();
+      _mapController.move(newPos, 16.0); // Zoom in closer
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to get location: $e')));
+    }
+  }
+
+  /// --- Updates all markers on the map ---
   void _updateMarkers() {
     setState(() {
       _markers = [
@@ -545,7 +590,7 @@ class _DriverScreenState extends State<DriverScreen>
             size: 30,
           ),
         ),
-        // Destination Marker (only if one is selected)
+        // Destination Marker
         if (_destination != null)
           Marker(
             point: _destination!,
@@ -562,11 +607,10 @@ class _DriverScreenState extends State<DriverScreen>
     _pulseController.dispose();
     _locationUpdateTimer?.cancel();
     _sourceController.dispose();
-    // _destinationController.dispose(); // No longer needed
     super.dispose();
   }
 
-  // --- NEW: This function handles the map long-press ---
+  /// --- Handles long-press on map to set destination ---
   void _handleLongPress(TapPosition tap, LatLng latlng) async {
     if (_isTripActive) return; // Don't allow changing destination during a trip
 
@@ -576,98 +620,96 @@ class _DriverScreenState extends State<DriverScreen>
     });
     _updateMarkers();
 
-    // --- Optional: Get the address of the tapped point ---
-    // You need to implement reverseGeocode in your MapApiService
     try {
       final address = await _mapApiService.reverseGeocode(latlng);
-      setState(() {
-        _destinationAddress = address;
-      });
+      if (mounted) setState(() { _destinationAddress = address; });
     } catch (e) {
-      setState(() {
-        _destinationAddress = "Tapped Location";
-      });
+      if (mounted) setState(() { _destinationAddress = "Tapped Location"; });
     }
   }
 
+  /// --- Starts the trip, called by "Start Journey" button ---
   void _startJourney() async {
     if (_destination == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Long-press on the map to set a destination')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Long-press on the map to set a destination')));
       return;
     }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Calculating shortest route...')));
+    
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Calculating shortest route...')));
 
     try {
-      final routePoints = await _mapApiService.getShortestRoute(
-          _currentPosition, _destination!);
+      final routePoints = await _mapApiService.getShortestRoute(_currentPosition, _destination!);
       _routePoints = routePoints;
 
       if (routePoints.isEmpty) {
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Could not find a route.')));
+        if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not find a route.')));
         return;
       }
 
+      // --- Dark Violet Polyline Highlight ---
       final routePolyline = Polyline(
         points: routePoints,
-        strokeWidth: 7.0, // Make the line thicker
-        color: Colors.deepPurple[700]!.withOpacity(0.9), // Dark violet with high opacity
-        borderColor: Colors.purple[900]!.withOpacity(0.8), // A slightly darker purple border
-        borderStrokeWidth: 2.0, // Add a border to make it pop even more
+        strokeWidth: 8.0, 
+        color: Colors.deepPurple[700]!.withOpacity(0.9),
+        borderColor: Colors.purple[900]!.withOpacity(0.8),
+        borderStrokeWidth: 2.0,
       );
-
+        
       setState(() {
         _isTripActive = true;
-        _updateMarkers();
+        _polylines = [routePolyline];
+        _updateMarkers(); 
       });
 
-      _mapController.fitBounds(LatLngBounds.fromPoints(routePoints),
-          options: const FitBoundsOptions(padding: EdgeInsets.all(50.0)));
+      _mapController.fitBounds(LatLngBounds.fromPoints(routePoints), options: const FitBoundsOptions(padding: EdgeInsets.all(50.0)));
 
       _startSendingLocationUpdates();
+
     } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Error finding route: $e')));
+      if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error finding route: $e')));
     }
   }
 
+  /// --- Simulates driver movement and sends socket updates ---
   void _startSendingLocationUpdates() {
-    _locationUpdateTimer?.cancel();
-    int idx = 0;
-    _locationUpdateTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
-      if (idx >= _routePoints.length) {
-        _endJourney();
-        return;
-      }
-      _currentPosition = _routePoints[idx];
-      idx++;
-
-      _updateMarkers();
-
-      _socketService.sendLocationUpdate(
+      _locationUpdateTimer?.cancel();
+      int idx = 0;
+      _locationUpdateTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+        if (idx >= _routePoints.length) {
+          _endJourney(); // Trip is over
+          return;
+        }
+        
+        _currentPosition = _routePoints[idx];
+        idx++;
+        
+        _updateMarkers(); // Move the driver icon
+        
+        // Send location to server
+        _socketService.sendLocationUpdate(
           ambulanceId: widget.userId,
           lat: _currentPosition.latitude,
-          lng: _currentPosition.longitude);
-      print("Sent location update: $_currentPosition");
-    });
+          lng: _currentPosition.longitude
+        );
+        print("Sent location update: $_currentPosition");
+      });
   }
 
+  /// --- Ends the trip, called by "End Journey" button or end of route ---
   void _endJourney() {
     _locationUpdateTimer?.cancel();
     setState(() {
       _isTripActive = false;
       _polylines = [];
-      _destination = null;
-      _destinationAddress = null; // Clear address
-      _updateMarkers(); // Reset markers
+      _destination = null; 
+      _destinationAddress = null;
+      _sourceController.text = "My Current Location"; // Reset to default
+      _updateMarkers();
     });
+    // Attempt to get location again to reset
+    _getCurrentLocation();
   }
-
+  
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -680,10 +722,9 @@ class _DriverScreenState extends State<DriverScreen>
               padding: const EdgeInsets.only(right: 12.0),
               child: Row(
                 children: [
-                  const Text("TRIP ACTIVE",
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(width: 8),
-                  Icon(Icons.warning_amber_rounded, color: Colors.yellow[300]),
+                    const Text("TRIP ACTIVE", style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 8),
+                    Icon(Icons.warning_amber_rounded, color: Colors.yellow[300]),
                 ],
               ),
             )
@@ -696,15 +737,13 @@ class _DriverScreenState extends State<DriverScreen>
             options: MapOptions(
               initialCenter: _initialPosition,
               initialZoom: 14.0,
-              // --- THIS IS THE KEY ---
-              onLongPress: _handleLongPress,
+              onLongPress: _handleLongPress, // For destination
             ),
             children: [
               TileLayer(
-                urlTemplate:
-                    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
                 subdomains: const ['a', 'b', 'c'],
-                userAgentPackageName: 'com.example.ats_frontend',
+                userAgentPackageName: 'com.example.ats_frontend', 
               ),
               PolylineLayer(polylines: _polylines),
               MarkerLayer(markers: _markers),
@@ -714,32 +753,22 @@ class _DriverScreenState extends State<DriverScreen>
             top: 10,
             left: 10,
             right: 10,
-            child: _buildSourceDestBar(),
+            child: _buildSourceDestBar(), // --- This is the new card ---
           ),
-          if (!_isTripActive)
-            Positioned(
-              bottom: 30,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: _buildJourneyButton(),
-              ),
+          Positioned(
+            bottom: 30,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: _buildJourneyButton(),
             ),
-          if (_isTripActive)
-            Positioned(
-              bottom: 30,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: _buildJourneyButton(),
-              ),
-            )
+          )
         ],
       ),
     );
   }
 
-  // --- MODIFIED: This widget is now simpler ---
+  /// --- This widget now contains BOTH source options ---
   Widget _buildSourceDestBar() {
     bool isEnabled = !_isTripActive;
 
@@ -750,60 +779,58 @@ class _DriverScreenState extends State<DriverScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // --- Source Row (Still here) ---
+            // --- SOURCE ROW ---
             Row(
               children: [
                 const Icon(Icons.location_on, color: Colors.green, size: 22),
                 const SizedBox(width: 8),
-                const Text('Source:',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const Text('Source:', style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(width: 8),
+                // --- OPTION 1: Hardcoded Dropdown ---
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: _sourceController.text.isNotEmpty
-                        ? _sourceController.text
-                        : null,
-                    items: _amravatiPlaces
-                        .map((place) => DropdownMenuItem(
-                            value: place,
-                            child:
-                                Text(place, overflow: TextOverflow.ellipsis)))
-                        .toList(),
-                    onChanged: isEnabled
-                        ? (val) {
-                            if (val != null) {
-                              _sourceController.text = val;
-                              _performSourceSearch();
-                            }
-                          }
-                        : null,
-                    decoration: InputDecoration(
-                      hintText: 'Select source depot',
-                      border: InputBorder.none,
+                    value: _sourceController.text.isNotEmpty && _amravatiPlaces.contains(_sourceController.text) 
+                            ? _sourceController.text 
+                            : null, // Only show a value if it's from the list
+                    hint: Text(
+                      _sourceController.text.isEmpty 
+                        ? 'Select source depot' 
+                        : _sourceController.text, // Shows "My Current Location"
+                      overflow: TextOverflow.ellipsis,
                     ),
+                    items: _amravatiPlaces.map((place) => DropdownMenuItem(value: place, child: Text(place, overflow: TextOverflow.ellipsis))).toList(),
+                    onChanged: isEnabled ? (val) {
+                      if (val != null) {
+                        _sourceController.text = val;
+                        _performSourceSearch(); // Use hardcoded location
+                      }
+                    } : null, 
+                    decoration: const InputDecoration(border: InputBorder.none),
                     isExpanded: true,
                   ),
                 ),
+                // --- OPTION 2: "My Location" Button ---
+                IconButton(
+                  icon: const Icon(Icons.my_location, color: Colors.blue),
+                  onPressed: isEnabled ? _getCurrentLocation : null, // Use GPS
+                  tooltip: 'Get Current Location',
+                )
               ],
             ),
             const Divider(height: 16),
-            // --- Destination Row (Replaced) ---
+            // --- DESTINATION ROW ---
             Row(
               children: [
                 const Icon(Icons.flag, color: Colors.red, size: 22),
                 const SizedBox(width: 8),
-                const Text('Destination:',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const Text('Destination:', style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(width: 8),
                 Expanded(
-                  // Show the address if we have it, otherwise show instructions
                   child: Text(
                     _destinationAddress ?? 'Long-press on map to set...',
                     style: TextStyle(
                       fontSize: 15,
-                      color: _destinationAddress == null
-                          ? Colors.black54
-                          : Colors.black,
+                      color: _destinationAddress == null ? Colors.black54 : Colors.black,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -816,16 +843,15 @@ class _DriverScreenState extends State<DriverScreen>
     );
   }
 
-  // --- This function is still needed for the Source dropdown ---
+  /// --- This is for the Hardcoded Dropdown ---
   void _performSourceSearch() {
     final query = _sourceController.text.trim();
     if (query.isEmpty) return;
+    
     final pos = _amravatiCoordinates[query];
 
     if (pos == null) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Source location not in database.')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Source location not in database.')));
       return;
     }
     setState(() {
@@ -835,31 +861,23 @@ class _DriverScreenState extends State<DriverScreen>
     _mapController.move(pos, 14.0);
   }
 
-  // --- _performDestSearch is no longer needed ---
-
+  /// --- The Start/End Journey Button ---
   Widget _buildJourneyButton() {
     bool isStartDisabled = !_isTripActive && _destination == null;
 
     return ScaleTransition(
       scale: _pulseAnimation,
       child: ElevatedButton.icon(
-        icon: Icon(
-            _isTripActive
-                ? Icons.stop_circle_outlined
-                : Icons.play_arrow_rounded,
-            size: 32),
+        icon: Icon(_isTripActive ? Icons.stop_circle_outlined : Icons.play_arrow_rounded, size: 32),
         label: Text(
           _isTripActive ? 'END JOURNEY' : 'START JOURNEY',
-          style: const TextStyle(
-              fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 1.2),
         ),
-        onPressed: isStartDisabled
-            ? null
-            : (_isTripActive ? _endJourney : _startJourney),
+        onPressed: isStartDisabled ? null : (_isTripActive ? _endJourney : _startJourney),
         style: ElevatedButton.styleFrom(
-          backgroundColor: _isTripActive
-              ? Colors.blueGrey[700]
-              : (isStartDisabled ? Colors.grey : Colors.red[700]),
+          backgroundColor: _isTripActive 
+            ? Colors.blueGrey[700] 
+            : (isStartDisabled ? Colors.grey : Colors.red[700]), 
           foregroundColor: Colors.white,
           shape: const StadiumBorder(),
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
