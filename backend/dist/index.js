@@ -66,8 +66,9 @@ async function main() {
             await handleDisconnect(socket); // Or a new function like handleJourneyEnd(socket)
         });
     });
-    server.listen(5000, '0.0.0.0', () => {
-        console.log('Server running on http://0.0.0.0:5000');
+    const PORT = Number(process.env.PORT) || 3000;
+    server.listen(PORT, '0.0.0.0', () => {
+        console.log('Server running on http://0.0.0.0:' + PORT);
     });
 }
 main();
