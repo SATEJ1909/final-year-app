@@ -1,3 +1,5 @@
+import dotenv from 'dotenv';
+dotenv.config();
 import { createClient } from 'redis';
 // A self-invoking async function to initialize and connect the client.
 // This pattern ensures we export a single, connected client instance.
@@ -5,7 +7,7 @@ const initializeRedisClient = async () => {
     const client = createClient({
         // The Redis URL is now hardcoded for faster MVP setup.
         // This defaults to a standard local Redis installation.
-        url: 'redis://localhost:6379',
+        url: process.env.REDIS_URL,
     });
     client.on('error', (err) => console.error('Redis Client Error', err));
     try {
