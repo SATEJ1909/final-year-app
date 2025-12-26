@@ -245,10 +245,10 @@ class _PoliceScreenState extends State<PoliceScreen> with TickerProviderStateMix
       ),
     );
   }
-}
+}*/
 
- */
-import 'dart:async';
+ 
+/* import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -694,6 +694,312 @@ class _PoliceScreenState extends State<PoliceScreen> with TickerProviderStateMix
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}  */
+
+import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:lottie/lottie.dart' hide Marker;
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:provider/provider.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:vibration/vibration.dart';
+import 'package:audioplayers/audioplayers.dart';
+import '../../services/socket_io_service.dart';
+
+class PoliceScreen extends StatefulWidget {
+  final String userId;
+  const PoliceScreen({Key? key, required this.userId}) : super(key: key);
+
+  @override
+  _PoliceScreenState createState() => _PoliceScreenState();
+}
+
+class _PoliceScreenState extends State<PoliceScreen> with TickerProviderStateMixin {
+  final MapController _mapController = MapController();
+  late SocketService _socketService;
+  final AudioPlayer _audioPlayer = AudioPlayer();
+
+  // --- State Variables ---
+  LatLng _currentBaseLocation = const LatLng(20.9374, 77.7796); 
+  final TextEditingController _baseLocationController = TextEditingController();
+  final Map<String, AmbulancePosition> _activeAmbulances = {};
+  ProximityAlert? _currentAlert;
+  static const double _alertRadiusInKm = 2.5;
+
+  // --- Animation Controllers ---
+  late AnimationController _alertAnimController;
+  late Animation<Offset> _alertSlideAnim;
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+  Timer? _alertTimer;
+
+  // --- Amravati Coordinates Database ---
+  final Map<String, LatLng> _amravatiCoordinates = {
+    'Amravati Railway Station': const LatLng(20.9320, 77.7523),
+    'Rajkamal Square': const LatLng(20.9374, 77.7796),
+    'Kathora Gate': const LatLng(20.9968, 77.7565),
+    'Camp Area': const LatLng(20.9436, 77.7617),
+    'Irwin Square': const LatLng(20.9275, 77.7580),
+    'Badnera Station': const LatLng(20.8600, 77.7300),
+    'Sai Nagar': const LatLng(20.9000, 77.7300),
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _socketService = Provider.of<SocketService>(context, listen: false);
+
+    // 1. Setup Alert Banner Animation
+    _alertAnimController = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
+    _alertSlideAnim = Tween<Offset>(begin: const Offset(0, -2.5), end: Offset.zero)
+        .animate(CurvedAnimation(parent: _alertAnimController, curve: Curves.easeOutBack));
+
+    // 2. Setup Scanning Pulse Animation
+    _pulseController = AnimationController(vsync: this, duration: const Duration(seconds: 2));
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 3.5).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut)
+    );
+    _pulseController.repeat(reverse: true);
+
+    _connectAndListen();
+  }
+
+  void _connectAndListen() {
+    _socketService.connectAndListen(userId: widget.userId, role: 'police', location: _currentBaseLocation);
+    _socketService.positionUpdateStream.listen((pos) {
+      if (mounted) setState(() => _activeAmbulances[pos.ambulanceId] = pos);
+    });
+    _socketService.alertStream.listen((alert) => _triggerAlert(alert));
+  }
+
+  // --- THE PROFESSIONAL TRIGGER ---
+  void _triggerAlert(ProximityAlert alert) async {
+    if (!mounted) return;
+
+    // A. Physical Feedback
+    if (await Vibration.hasVibrator() ?? false) {
+      Vibration.vibrate(pattern: [0, 500, 200, 500]);
+    }
+
+    // B. Sound Feedback
+    try { await _audioPlayer.play(AssetSource('sounds/siren.mp3')); } catch (e) {}
+
+    // C. Visual Feedback
+    setState(() => _currentAlert = alert);
+    _alertAnimController.forward(from: 0.0);
+    
+    final pos = _activeAmbulances[alert.ambulanceId];
+    if (pos != null) _mapController.move(LatLng(pos.lat, pos.lng), 15.0);
+
+    _alertTimer?.cancel();
+    _alertTimer = Timer(const Duration(seconds: 12), () {
+      if (mounted) { _alertAnimController.reverse(); _audioPlayer.stop(); }
+    });
+  }
+
+  void _setNewBaseLocation(LatLng newLocation, String locationName) {
+    setState(() {
+      _currentBaseLocation = newLocation;
+      _baseLocationController.text = locationName;
+    });
+    _mapController.move(newLocation, 14.5);
+    _socketService.updatePoliceLocation(newLocation);
+  }
+
+  @override
+  void dispose() {
+    _alertAnimController.dispose();
+    _pulseController.dispose();
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      appBar: _buildGlassAppBar(),
+      body: Stack(
+        children: [
+          // 1. THE LIVE MAP
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(initialCenter: _currentBaseLocation, initialZoom: 14.5),
+            children: [
+              TileLayer(urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', subdomains: const ['a', 'b', 'c']),
+
+              // 2. THE ANIMATED PULSE ZONE
+              AnimatedBuilder(
+                animation: _pulseAnimation,
+                builder: (context, child) {
+                  return CircleLayer(
+                    circles: [
+                      CircleMarker(
+                        point: _currentBaseLocation,
+                        radius: _alertRadiusInKm * 1000,
+                        useRadiusInMeter: true,
+                        color: Colors.blueAccent.withOpacity(0.1 - (_pulseController.value * 0.05)),
+                        borderColor: Colors.blueAccent,
+                        borderStrokeWidth: _pulseAnimation.value,
+                      ),
+                    ],
+                  );
+                },
+              ),
+
+              // 3. MARKERS
+              MarkerLayer(
+                markers: [
+                  // Rotating Radar Sweep Lottie
+                  Marker(
+                    point: _currentBaseLocation,
+                    width: 250, height: 250,
+                    child: Opacity(
+                      opacity: 0.3,
+                      child: Lottie.network('https://lottie.host/57398313-9776-4b33-9c4b-e03170975b6a/Look7G6e0V.json'),
+                    ),
+                  ),
+                  // Police HQ
+                  Marker(
+                    point: _currentBaseLocation,
+                    width: 65, height: 65,
+                    child: Container(
+                      decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.blue[900], boxShadow: [BoxShadow(color: Colors.blueAccent.withOpacity(0.5), blurRadius: 15)]),
+                      child: const Icon(Icons.security, color: Colors.white, size: 35),
+                    ),
+                  ),
+                  // Synced Ambulances
+                  ..._activeAmbulances.values.map((data) => Marker(
+                    point: LatLng(data.lat, data.lng),
+                    width: 50, height: 50,
+                    child: Transform.rotate(
+                      angle: (data.heading ?? 0) * (math.pi / 180),
+                      child: SvgPicture.asset('assets/images/ambulance_marker.svg'),
+                    ),
+                  )).toList(),
+                ],
+              ),
+            ],
+          ),
+
+          // 4. TACTICAL STATUS HEADER
+          Positioned(
+            top: 135, left: 20, right: 20,
+            child: _buildTacticalStatusWidget(),
+          ),
+
+          // 5. ALERT BANNER
+          if (_currentAlert != null) 
+            Positioned(
+              top: 195, left: 15, right: 15,
+              child: _buildAlertBanner(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // --- PROFESSIONAL UI WIDGETS ---
+
+  PreferredSizeWidget _buildGlassAppBar() {
+    return PreferredSize(
+      preferredSize: const Size.fromHeight(100.0),
+      child: ClipRRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            color: Colors.black.withOpacity(0.4),
+            padding: const EdgeInsets.only(top: 40, left: 20, right: 20, bottom: 10),
+            child: Card(
+              color: Colors.white.withOpacity(0.95),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    const Icon(Icons.location_searching, color: Colors.blueAccent),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        isExpanded: true,
+                        decoration: const InputDecoration(border: InputBorder.none),
+                        hint: const Text("Set Base Location"),
+                        items: _amravatiCoordinates.keys.map((p) => DropdownMenuItem(value: p, child: Text(p, overflow: TextOverflow.ellipsis))).toList(),
+                        onChanged: (val) { if (val != null) _setNewBaseLocation(_amravatiCoordinates[val]!, val); },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTacticalStatusWidget() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D1B2A).withOpacity(0.85),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blueAccent.withOpacity(0.4)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.radar, color: Colors.greenAccent, size: 20),
+              const SizedBox(width: 10),
+              const Text("SCANNING ACTIVE", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 1.2)),
+            ],
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(color: Colors.blueAccent, borderRadius: BorderRadius.circular(20)),
+            child: Text("${_activeAmbulances.length} UNITS", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAlertBanner() {
+    return SlideTransition(
+      position: _alertSlideAnim,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.red[900],
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [BoxShadow(color: Colors.red.withOpacity(0.5), blurRadius: 20)],
+        ),
+        child: Row(
+          children: [
+            Lottie.network('https://lottie.host/8e2f83f2-8951-40c0-9366-267389658742/vX7G7G6e0V.json', width: 40, height: 40),
+            const SizedBox(width: 15),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text("PROXIMITY BREACH", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                  Text(_currentAlert!.message, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                ],
+              ),
+            ),
+            IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => _alertAnimController.reverse())
+          ],
         ),
       ),
     );

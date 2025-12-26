@@ -26,7 +26,7 @@ class AuthService {
   // --- IMPORTANT ---
   // For Android emulator, use 10.0.2.2 instead of localhost.
   // For physical devices, use your computer's local IP address.
-  static const String _baseUrl = 'http://192.168.22.33:5000/api/v1/user';
+  static const String _baseUrl = "http://localhost:5000/api/v1/user";
 
   /// Registers a new user by sending their details to the backend.
   ///
@@ -54,7 +54,9 @@ class AuthService {
           'password': password,
           'role': apiRole,
         }),
-      );
+      ).timeout(const Duration(seconds: 10), onTimeout: () {
+        throw Exception('Server connection timeout. Check if backend is running.');
+      });
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         // Successfully created the user.
@@ -71,13 +73,20 @@ class AuthService {
         return true;
       } else {
         // Handle server errors (e.g., user already exists, validation error).
-        final errorBody = jsonDecode(response.body);
-        throw Exception('Failed to sign up: ${errorBody['message']}');
+        try {
+          final errorBody = jsonDecode(response.body);
+          throw Exception('Failed to sign up: ${errorBody['message'] ?? 'Unknown error'}');
+        } catch (e) {
+          throw Exception('Signup failed with status ${response.statusCode}');
+        }
       }
-    } catch (e) {
+    } on Exception catch (e) {
       // Handle network errors or other exceptions.
       debugPrint('Signup error: $e');
-      throw Exception('Could not connect to the server. Please try again later.');
+      rethrow;
+    } catch (e) {
+      debugPrint('Unexpected signup error: $e');
+      throw Exception('An unexpected error occurred. Please try again.');
     }
   }
 
@@ -102,7 +111,9 @@ class AuthService {
           'username': username,
           'password': password,
         }),
-      );
+      ).timeout(const Duration(seconds: 10), onTimeout: () {
+        throw Exception('Server connection timeout. Check if backend is running.');
+      });
 
       if (response.statusCode == 200) {
         // Successfully logged in.
@@ -113,19 +124,26 @@ class AuthService {
         // Persist token and role to shared preferences for later use.
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('auth_token', loginResp.token);
-  await prefs.setString('user_role', loginResp.role);
-  await prefs.setString('user_id', loginResp.id);
+        await prefs.setString('user_role', loginResp.role);
+        await prefs.setString('user_id', loginResp.id);
 
         return loginResp;
       } else {
         // Handle server errors (e.g., invalid credentials).
-        final errorBody = jsonDecode(response.body);
-        throw Exception('Failed to log in: ${errorBody['message']}');
+        try {
+          final errorBody = jsonDecode(response.body);
+          throw Exception('Failed to log in: ${errorBody['message'] ?? 'Unknown error'}');
+        } catch (e) {
+          throw Exception('Login failed with status ${response.statusCode}');
+        }
       }
-    } catch (e) {
+    } on Exception catch (e) {
       // Handle network errors or other exceptions.
       debugPrint('Login error: $e');
-      throw Exception('Could not connect to the server. Please try again later.');
+      rethrow;
+    } catch (e) {
+      debugPrint('Unexpected login error: $e');
+      throw Exception('An unexpected error occurred. Please try again.');
     }
   }
 

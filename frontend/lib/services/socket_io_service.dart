@@ -9,11 +9,13 @@ class AmbulancePosition {
   final String ambulanceId;
   final double lat;
   final double lng;
+  final double? heading; // NEW: Added heading for rotation
 
   AmbulancePosition({
     required this.ambulanceId, 
     required this.lat, 
-    required this.lng
+    required this.lng,
+    this.heading, // NEW: Optional heading
   });
 
   factory AmbulancePosition.fromJson(Map<String, dynamic> json) {
@@ -21,6 +23,7 @@ class AmbulancePosition {
       ambulanceId: json['ambulanceId'] ?? json['driverId'] ?? 'unknown',
       lat: (json['lat'] as num).toDouble(),
       lng: (json['lng'] as num).toDouble(),
+      heading: (json['heading'] as num?)?.toDouble(), // NEW: Parse heading
     );
   }
 }
@@ -42,7 +45,6 @@ class ProximityAlert {
   }
 }
 
-
 class SocketService with ChangeNotifier {
   late IO.Socket _socket;
 
@@ -60,6 +62,7 @@ class SocketService with ChangeNotifier {
   }
 
   void _initSocket() {
+    // Change this URL to your ngrok URL when testing with a friend
     _socket = IO.io('http://192.168.22.33:5000', <String, dynamic>{
       'transports': ['websocket'],
       'autoConnect': false,
@@ -70,8 +73,6 @@ class SocketService with ChangeNotifier {
     _socket.onError((data) => print('Socket Error: $data'));
 
     // --- LISTENERS FOR INCOMING EVENTS ---
-    
-    // *** FIX 1 & 3: Changed event name and used .fromJson ***
     _socket.on('positionUpdate', (data) {
       try {
         _positionUpdateController.add(AmbulancePosition.fromJson(data));
@@ -80,7 +81,6 @@ class SocketService with ChangeNotifier {
       }
     });
 
-    // *** FIX 1 & 3: Changed event name and used .fromJson ***
     _socket.on('proximityAlert', (data) {
       try {
         _alertController.add(ProximityAlert.fromJson(data));
@@ -94,7 +94,6 @@ class SocketService with ChangeNotifier {
   void connectAndListen({required String userId, required String role, LatLng? location}) {
     if (_socket.connected) return;
 
-    // Set auth token
     AuthService.getToken().then((token) {
       if (token != null) {
         final options = _socket.io.options as Map<String, dynamic>;
@@ -104,7 +103,6 @@ class SocketService with ChangeNotifier {
     });
     
     _socket.onConnect((_) {
-      // Send the 'join' event once connected.
       _socket.emit('join', {
         'userId': userId,
         'role': role,
@@ -113,18 +111,22 @@ class SocketService with ChangeNotifier {
     });
   }
 
-  /// Called by the DRIVER screen
-  void sendLocationUpdate({required String ambulanceId, required double lat, required double lng}) {
+  /// Updated for Driver Screen to send rotation
+  void sendLocationUpdate({
+    required String ambulanceId, 
+    required double lat, 
+    required double lng,
+    double? heading, // NEW: Added heading parameter
+  }) {
     if (!_socket.connected) return;
     _socket.emit('updateLocation', {
       'ambulanceId': ambulanceId,
       'lat': lat,
       'lng': lng,
+      'heading': heading, // NEW: Emit heading
     });
   }
 
-  /// *** FIX 2: Added this new function for the POLICE screen ***
-  /// Called by the POLICE screen to update their base
   void updatePoliceLocation(LatLng location) {
     if (!_socket.connected) return;
     _socket.emit('updatePoliceLocation', {
